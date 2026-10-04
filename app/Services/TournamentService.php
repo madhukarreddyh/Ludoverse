@@ -161,8 +161,10 @@ class TournamentService
     /**
      * A participant joins their fixture's match before join_deadline_at.
      * 1v1: both sides joined -> the real (bet 0) Ludo match is created.
-     * 4v4: $side (1|2) required; both sides at 4 -> match created,
-     * otherwise the join-deadline processor creates it (or forfeits).
+     * 4v4: $side (1|2) required; the user must be on that side's roster;
+     * joining confirms presence. Both sides fully confirmed -> the match
+     * is created; otherwise the join-deadline processor creates it (min 3
+     * per side) or records the forfeit.
      *
      * @throws LudoException FIXTURE_NOT_PENDING / JOIN_DEADLINE_PASSED /
      *                       NOT_A_PARTICIPANT / NOT_YOUR_FIXTURE / SIDE_REQUIRED / SIDE_FULL
@@ -201,26 +203,32 @@ class TournamentService
                     $this->createFixtureMatch($fixture->fresh());
                 }
             } else {
+                // 4v4: sides are pre-assigned rosters (league grouping or
+                // snake-drafted knockout); joining confirms presence.
                 if (! in_array($side, [1, 2], true)) {
                     throw new LudoException('SIDE_REQUIRED', 'Choose side 1 or 2 to join.');
                 }
-                $side1 = $fixture->side1_user_ids ?? [];
-                $side2 = $fixture->side2_user_ids ?? [];
-                if (in_array($user->id, $side1, true) || in_array($user->id, $side2, true)) {
+                $roster = $fixture->sideUserIds($side);
+                if (! in_array($user->id, $roster, true)) {
+                    throw new LudoException('NOT_YOUR_FIXTURE', 'You are not on that side.', 403);
+                }
+
+                $confirmed = $fixture->confirmedUserIds($side);
+                if (in_array($user->id, $confirmed, true)) {
                     return $fixture->fresh(); // idempotent re-join
                 }
-
-                $column = $side === 1 ? 'side1_user_ids' : 'side2_user_ids';
-                $target = $side === 1 ? $side1 : $side2;
-                if (count($target) >= 4) {
-                    throw new LudoException('SIDE_FULL', 'That side is full.');
-                }
-                $target[] = $user->id;
-                $fixture->update([$column => array_values($target)]);
+                $confirmed[] = $user->id;
+                $fixture->update([
+                    $side === 1 ? 'side1_confirmed' : 'side2_confirmed' => array_values($confirmed),
+                ]);
 
                 $fixture->refresh();
-                if (count($fixture->side1_user_ids ?? []) === 4
-                    && count($fixture->side2_user_ids ?? []) === 4) {
+                $c1 = count($fixture->confirmedUserIds(1));
+                $c2 = count($fixture->confirmedUserIds(2));
+                $r1 = count($fixture->sideUserIds(1));
+                $r2 = count($fixture->sideUserIds(2));
+                // Both sides fully confirmed -> the match can start.
+                if ($c1 >= $r1 && $c2 >= $r2 && $r1 > 0 && $r2 > 0) {
                     $this->createFixtureMatch($fixture->fresh());
                 }
             }
@@ -251,8 +259,12 @@ class TournamentService
                     ['user_id' => $fixture->participant2->user_id, 'team' => 1],
                 ], '1v1', 0, ['tournament_fixture_id' => $fixture->id]);
             } else {
+                // 4v4: seats go to CONFIRMED users; short sides are padded
+                // with bots so the 8-seat table can start. Callers must
+                // enforce the minimum-3 rule BEFORE calling (a side with
+                // fewer than 3 confirmed forfeits instead of playing).
                 $seats = [];
-                foreach ([0 => $fixture->side1_user_ids ?? [], 1 => $fixture->side2_user_ids ?? []] as $team => $userIds) {
+                foreach ([0 => $fixture->confirmedUserIds(1), 1 => $fixture->confirmedUserIds(2)] as $team => $userIds) {
                     foreach (array_slice($userIds, 0, 4) as $uid) {
                         $seats[] = ['user_id' => $uid, 'team' => $team];
                     }
@@ -333,13 +345,13 @@ class TournamentService
                         $fixture->update(['status' => 'completed']);
                     }
                 } else {
-                    $side1 = $fixture->side1_user_ids ?? [];
-                    $side2 = $fixture->side2_user_ids ?? [];
-                    $c1 = count($side1);
-                    $c2 = count($side2);
+                    // 4v4: forfeits are decided on CONFIRMED counts.
+                    $c1 = count($fixture->confirmedUserIds(1));
+                    $c2 = count($fixture->confirmedUserIds(2));
 
                     if ($c1 < 3 && $c2 < 3) {
-                        foreach (array_merge($side1, $side2) as $uid) {
+                        // Both sides forfeit: every rostered user takes a loss.
+                        foreach (array_merge($fixture->sideUserIds(1), $fixture->sideUserIds(2)) as $uid) {
                             TournamentParticipant::where('tournament_id', $tournament->id)
                                 ->where('user_id', $uid)->increment('losses');
                         }
@@ -388,9 +400,28 @@ class TournamentService
                     $this->awardFixtureWin($fixture, $p2, $p1);
                 }
             } else {
-                // winning_team 0 => side 1, 1 => side 2.
+                // winning_team 0 => side 1, 1 => side 2. Only the users
+                // who actually played (confirmed) earn points.
                 $winnerSide = (int) $match->winning_team === 1 ? 2 : 1;
-                $this->awardSideWin($fixture, $winnerSide, $winnerSide === 1 ? 2 : 1);
+                $this->awardPlayedSideWin($fixture, $winnerSide, $winnerSide === 1 ? 2 : 1);
+            }
+
+            // IPL knockouts: the Eliminator loser is out of the tournament,
+            // and the Qualifier 2 loser finishes third (also out).
+            if (in_array($fixture->stage, ['eliminator', 'qualifier2'], true)) {
+                if ($tournament->mode === '1v1') {
+                    $loserId = (int) $fixture->participant1_id === (int) $fixture->winner_participant_id
+                        ? $fixture->participant2_id
+                        : $fixture->participant1_id;
+                    TournamentParticipant::where('id', $loserId)->update(['status' => 'eliminated']);
+                } else {
+                    $loserSide = (int) $fixture->winner_side === 1 ? 2 : 1;
+                    foreach ($fixture->sideUserIds($loserSide) as $uid) {
+                        TournamentParticipant::where('tournament_id', $fixture->tournament_id)
+                            ->where('user_id', $uid)
+                            ->update(['status' => 'eliminated']);
+                    }
+                }
             }
         });
     }
@@ -413,27 +444,43 @@ class TournamentService
     }
 
     /**
-     * 4v4 side win (played or by forfeit): 2 points + win to every
-     * joined user on the winning side, a loss to the losing side.
+     * 4v4 side win by FORFEIT: the whole rostered side wins/loses as a
+     * unit — every rostered user on the winning side gets 2 pts + a win,
+     * every rostered user on the forfeiting side takes a loss.
      */
     protected function awardSideWin(TournamentFixture $fixture, int $winnerSide, int $loserSide): void
     {
-        $tournamentId = $fixture->tournament_id;
+        $this->awardSideUsers($fixture, $fixture->sideUserIds($winnerSide), true);
+        $this->awardSideUsers($fixture, $fixture->sideUserIds($loserSide), false);
+        $fixture->update(['status' => 'completed', 'winner_side' => $winnerSide]);
+    }
 
-        foreach ($fixture->sideUserIds($winnerSide) as $uid) {
-            $p = TournamentParticipant::where('tournament_id', $tournamentId)
+    /**
+     * 4v4 side win from a PLAYED match: only the users who actually
+     * played (confirmed) earn points or take the loss.
+     */
+    protected function awardPlayedSideWin(TournamentFixture $fixture, int $winnerSide, int $loserSide): void
+    {
+        $this->awardSideUsers($fixture, $fixture->confirmedUserIds($winnerSide), true);
+        $this->awardSideUsers($fixture, $fixture->confirmedUserIds($loserSide), false);
+        $fixture->update(['status' => 'completed', 'winner_side' => $winnerSide]);
+    }
+
+    protected function awardSideUsers(TournamentFixture $fixture, array $userIds, bool $won): void
+    {
+        foreach ($userIds as $uid) {
+            $p = TournamentParticipant::where('tournament_id', $fixture->tournament_id)
                 ->where('user_id', $uid)->first();
-            if ($p) {
+            if (! $p) {
+                continue;
+            }
+            if ($won) {
                 $p->increment('points', 2);
                 $p->increment('wins');
+            } else {
+                $p->increment('losses');
             }
         }
-        foreach ($fixture->sideUserIds($loserSide) as $uid) {
-            TournamentParticipant::where('tournament_id', $tournamentId)
-                ->where('user_id', $uid)->increment('losses');
-        }
-
-        $fixture->update(['status' => 'completed', 'winner_side' => $winnerSide]);
     }
 
     // ------------------------------------------------------------------
@@ -648,10 +695,11 @@ class TournamentService
             $q2 = $tournament->fixtures()->where('stage', 'qualifier2')->latest('id')->first();
             $third = [$this->fixtureLoser($q2)->user_id];
         } else {
-            $champion = $final->sideUserIds($final->winner_side);
-            $runnerUp = $final->sideUserIds($final->winner_side === 1 ? 2 : 1);
+            // 4v4: prizes go to the users who PLAYED (confirmed) each side.
+            $champion = $final->confirmedUserIds($final->winner_side);
+            $runnerUp = $final->confirmedUserIds($final->winner_side === 1 ? 2 : 1);
             $q2 = $tournament->fixtures()->where('stage', 'qualifier2')->latest('id')->first();
-            $third = $q2->sideUserIds($q2->winner_side === 1 ? 2 : 1);
+            $third = $q2->confirmedUserIds($q2->winner_side === 1 ? 2 : 1);
         }
 
         $pool = $tournament->participants()->count() * $tournament->entry_fee_paise;
@@ -743,8 +791,12 @@ class TournamentService
     ): TournamentFixture {
         return $tournament->fixtures()->create([
             'stage' => $stage,
+            // Rosters: who MAY play. Joins confirm presence into
+            // side{1,2}_confirmed before the deadline.
             'side1_user_ids' => array_values($side1),
             'side2_user_ids' => array_values($side2),
+            'side1_confirmed' => [],
+            'side2_confirmed' => [],
             'scheduled_at' => now(),
             'join_deadline_at' => $this->joinDeadline(),
             'status' => 'pending',

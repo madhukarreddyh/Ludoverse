@@ -12,6 +12,7 @@ class TournamentFixture extends Model
         'participant1_id', 'participant2_id',
         'participant1_joined_at', 'participant2_joined_at',
         'side1_user_ids', 'side2_user_ids', 'winner_side',
+        'side1_confirmed', 'side2_confirmed',
         'scheduled_at', 'join_deadline_at',
         'status', 'winner_participant_id',
     ];
@@ -21,6 +22,8 @@ class TournamentFixture extends Model
         return [
             'side1_user_ids' => 'array',
             'side2_user_ids' => 'array',
+            'side1_confirmed' => 'array',
+            'side2_confirmed' => 'array',
             'winner_side' => 'integer',
             'scheduled_at' => 'datetime',
             'join_deadline_at' => 'datetime',
@@ -62,5 +65,15 @@ class TournamentFixture extends Model
         return $side === 1
             ? ($this->side1_user_ids ?? [])
             : ($this->side2_user_ids ?? []);
+    }
+
+    /**
+     * 4v4 confirmed joins per side (who actually showed up).
+     */
+    public function confirmedUserIds(int $side): array
+    {
+        return $side === 1
+            ? ($this->side1_confirmed ?? [])
+            : ($this->side2_confirmed ?? []);
     }
 }
