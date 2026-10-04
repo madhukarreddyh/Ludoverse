@@ -33,6 +33,16 @@ class Setting extends Model
         'tds_rate' => '30',
         // Ludo matches (Phase 4): platform cut of each pot, in percent.
         'match_commission_rate' => '10',
+        // Bot economy (Phase 5).
+        'bot_difficulty' => 'medium',
+        'bot_fill_enabled' => '0',
+        'bot_tables' => '["500","1000"]',
+        'bot_max_per_match' => '1',
+        'bot_join_after_seconds' => '20',
+        // Tournaments (Phase 5): platform cut of the entry-fee pool, %.
+        'tournament_commission_rate' => '10',
+        // Minutes a fixture participant has to join their match.
+        'tournament_join_deadline_minutes' => '60',
     ];
 
     /**
