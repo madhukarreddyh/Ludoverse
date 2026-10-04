@@ -18,6 +18,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class WalletController extends Controller
@@ -267,7 +268,9 @@ class WalletController extends Controller
                 $entry->update(['meta' => array_merge($entry->meta ?? [], ['purpose' => 'withdrawal_hold'])]);
             });
         } catch (InsufficientBalanceException $e) {
-            return back()->withErrors(['amount' => $e->getMessage()])->withInput();
+            // ValidationException => 302 back for web forms, 422 JSON for
+            // API-style requests (the QA contract for this failure is 422).
+            throw ValidationException::withMessages(['amount' => $e->getMessage()]);
         }
 
         return redirect()->route('wallet.index')->with('status', 'Withdrawal request submitted.');
