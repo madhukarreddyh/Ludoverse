@@ -10,6 +10,8 @@ use App\Services\FraudScanService;
 use App\Services\HeuristicVpnCheck;
 use App\Services\Ludo\LudoException;
 use App\Services\Ludo\MatchService;
+use App\Services\TableManager;
+use App\Services\WalletService;
 use Illuminate\Http\Request;
 
 /**
@@ -197,6 +199,83 @@ class PlayController extends Controller
         }
 
         return response()->json(['exited' => true]);
+    }
+
+    /**
+     * Game lobby: modes, open bet tables from the liquidity ladder,
+     * online count, resume card for the player's active match.
+     */
+    public function lobby(Request $request)
+    {
+        $user = $request->user();
+        $online = TableManager::onlineCount();
+        $bets = TableManager::allowedBets($online);
+
+        $activeMatch = LudoMatch::whereIn('status', ['waiting', 'running'])
+            ->whereHas('players', fn ($q) => $q->where('user_id', $user->id))
+            ->latest('id')
+            ->first();
+
+        $balancePaise = app(WalletService::class)->balance($user);
+
+        return view('play.lobby', [
+            'modes' => ['1v1', '2v2', '3v3', '4v4'],
+            'bets' => $bets,
+            'onlineCount' => $online,
+            'activeMatch' => $activeMatch,
+            'balancePaise' => $balancePaise,
+        ]);
+    }
+
+    /**
+     * Match board UI. Seated players get full controls; everyone else
+     * may spectate public matches (private ones stay invite-only).
+     */
+    public function board(Request $request, LudoMatch $match)
+    {
+        $user = $request->user();
+        $seat = $match->players()->where('user_id', $user->id)->first();
+
+        $spectator = false;
+        if (! $seat) {
+            if ($match->is_private && (int) $match->invited_user_id !== (int) $user->id) {
+                abort(403, 'This is a private match.');
+            }
+            $spectator = true;
+        }
+
+        $names = [];
+        foreach ($match->players()->with('user:id,username')->orderBy('id')->get() as $p) {
+            $key = $p->user_id !== null ? (int) $p->user_id : 'bot_' . $p->id;
+            $names[$key] = $p->is_bot
+                ? 'Bot · ' . ($p->bot_difficulty ?? 'auto')
+                : ($p->user->username ?? 'Player');
+        }
+
+        return view('play.board', [
+            'match' => $match,
+            'spectator' => $spectator,
+            'myColor' => $seat?->color,
+            'playerNames' => $names,
+        ]);
+    }
+
+    /**
+     * Simple player profile backing the bottom-nav Profile tab.
+     */
+    public function profile(Request $request)
+    {
+        $user = $request->user();
+        $balancePaise = app(WalletService::class)->balance($user);
+        $played = \App\Models\MatchPlayer::where('user_id', $user->id)->count();
+        $won = LudoMatch::where('winner_user_id', $user->id)->count();
+
+        return view('play.profile', [
+            'user' => $user,
+            'balancePaise' => $balancePaise,
+            'matchesPlayed' => $played,
+            'matchesWon' => $won,
+        ]);
     }
 
     /**

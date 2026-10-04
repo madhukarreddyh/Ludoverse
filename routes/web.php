@@ -21,6 +21,7 @@ use App\Http\Controllers\InstallController;
 use App\Http\Controllers\OtpController;
 use App\Http\Controllers\PageController;
 use App\Http\Controllers\PlayController;
+use App\Http\Controllers\PwaController;
 use App\Http\Controllers\SupportTicketController;
 use App\Http\Controllers\TournamentController;
 use App\Http\Controllers\Wallet\WalletController;
@@ -35,6 +36,16 @@ use Illuminate\Support\Facades\Route;
 */
 Route::get('/install', [InstallController::class, 'show'])->name('install.show');
 Route::post('/install', [InstallController::class, 'store'])->name('install.store');
+
+/*
+|--------------------------------------------------------------------------
+| PWA shell (service worker, manifest, offline page, splash)
+|--------------------------------------------------------------------------
+*/
+Route::get('/sw.js', [PwaController::class, 'serviceWorker'])->name('pwa.sw');
+Route::get('/offline.html', [PwaController::class, 'offline'])->name('pwa.offline');
+Route::get('/manifest.json', [PwaController::class, 'manifest'])->name('pwa.manifest');
+Route::get('/splash', [PageController::class, 'splash'])->name('splash');
 
 /*
 |--------------------------------------------------------------------------
@@ -62,6 +73,13 @@ Route::middleware('guest')->group(function () {
 });
 
 Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth')->name('logout');
+
+/*
+|--------------------------------------------------------------------------
+| Player profile (PWA bottom nav)
+|--------------------------------------------------------------------------
+*/
+Route::get('/profile', [PlayController::class, 'profile'])->middleware('auth')->name('profile');
 
 /*
 |--------------------------------------------------------------------------
@@ -112,6 +130,8 @@ Route::middleware('auth')->prefix('wallet')->name('wallet.')->group(function () 
 Route::get('/play/match/{match}/watch', [PlayController::class, 'watch'])->name('play.watch');
 
 Route::middleware(['auth', 'client.version'])->prefix('play')->name('play.')->group(function () {
+    Route::get('/', [PlayController::class, 'lobby'])->name('lobby');
+    Route::get('/match/{match}/board', [PlayController::class, 'board'])->name('match.board');
     Route::post('/find', [PlayController::class, 'find'])->name('find');
     Route::get('/match/{match}', [PlayController::class, 'show'])->name('match.show');
     Route::post('/match/{match}/roll', [PlayController::class, 'roll'])->name('match.roll');
@@ -126,6 +146,7 @@ Route::middleware(['auth', 'client.version'])->prefix('play')->name('play.')->gr
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth')->prefix('friends')->name('friends.')->group(function () {
+    Route::get('/page', [FriendController::class, 'page'])->name('page');
     Route::get('/', [FriendController::class, 'index'])->name('index');
     Route::post('/request', [FriendController::class, 'request'])->name('request');
     Route::post('/{friendship}/accept', [FriendController::class, 'accept'])->name('accept');

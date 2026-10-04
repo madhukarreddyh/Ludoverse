@@ -11,6 +11,14 @@ class PageController extends Controller
         return view('pages.home');
     }
 
+    /**
+     * Standalone PWA splash screen: logo animation, then into the app.
+     */
+    public function splash(): View
+    {
+        return view('play.splash');
+    }
+
     public function about(): View
     {
         return view('pages.about');

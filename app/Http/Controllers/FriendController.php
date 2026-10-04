@@ -135,4 +135,13 @@ class FriendController extends Controller
 
         return response()->json(['removed' => true]);
     }
+
+    /**
+     * Friends page for the PWA bottom nav. Renders via the existing
+     * JSON endpoints client-side; no logic changes here.
+     */
+    public function page()
+    {
+        return view('friends.page');
+    }
 }
