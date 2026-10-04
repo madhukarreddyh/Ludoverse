@@ -35,6 +35,14 @@ class SettingController extends Controller
             'bot_max_per_match' => Setting::get('bot_max_per_match', '1'),
             'bot_join_after_seconds' => Setting::get('bot_join_after_seconds', '20'),
             'tournament_commission_rate' => Setting::get('tournament_commission_rate', '10'),
+            // Security & anti-cheat (Phase 6).
+            'client_version' => Setting::get('client_version', '1.0.0'),
+            'cheat_min_move_ms' => Setting::get('cheat_min_move_ms', '200'),
+            'cheat_auto_suspend_flags' => Setting::get('cheat_auto_suspend_flags', '3'),
+            'cheat_flag_window_hours' => Setting::get('cheat_flag_window_hours', '24'),
+            'referral_bonus_paise' => Setting::get('referral_bonus_paise', '10000'),
+            'bonus_wager_multiplier' => Setting::get('bonus_wager_multiplier', '5'),
+            'risk_wd_ratio' => Setting::get('risk_wd_ratio', '0.9'),
         ]);
     }
 
@@ -64,6 +72,14 @@ class SettingController extends Controller
             'bot_max_per_match' => ['nullable', 'integer', 'min:0', 'max:7'],
             'bot_join_after_seconds' => ['nullable', 'integer', 'min:0', 'max:3600'],
             'tournament_commission_rate' => ['nullable', 'numeric', 'min:0', 'max:50'],
+            // Security & anti-cheat (Phase 6).
+            'client_version' => ['nullable', 'string', 'max:32'],
+            'cheat_min_move_ms' => ['nullable', 'integer', 'min:50', 'max:5000'],
+            'cheat_auto_suspend_flags' => ['nullable', 'integer', 'min:1', 'max:20'],
+            'cheat_flag_window_hours' => ['nullable', 'integer', 'min:1', 'max:720'],
+            'referral_bonus_paise' => ['nullable', 'integer', 'min:0', 'max:1000000'],
+            'bonus_wager_multiplier' => ['nullable', 'integer', 'min:1', 'max:50'],
+            'risk_wd_ratio' => ['nullable', 'numeric', 'min:0.1', 'max:2'],
         ]);
 
         Setting::set('copyright_text', $validated['copyright_text']);
@@ -102,6 +118,22 @@ class SettingController extends Controller
             ?? Setting::get('bot_join_after_seconds', '20')));
         Setting::set('tournament_commission_rate', (string) ($validated['tournament_commission_rate']
             ?? Setting::get('tournament_commission_rate', '10')));
+
+        // Security & anti-cheat (Phase 6): absent values keep the current setting.
+        Setting::set('client_version', (string) ($validated['client_version']
+            ?? Setting::get('client_version', '1.0.0')));
+        Setting::set('cheat_min_move_ms', (string) ($validated['cheat_min_move_ms']
+            ?? Setting::get('cheat_min_move_ms', '200')));
+        Setting::set('cheat_auto_suspend_flags', (string) ($validated['cheat_auto_suspend_flags']
+            ?? Setting::get('cheat_auto_suspend_flags', '3')));
+        Setting::set('cheat_flag_window_hours', (string) ($validated['cheat_flag_window_hours']
+            ?? Setting::get('cheat_flag_window_hours', '24')));
+        Setting::set('referral_bonus_paise', (string) ($validated['referral_bonus_paise']
+            ?? Setting::get('referral_bonus_paise', '10000')));
+        Setting::set('bonus_wager_multiplier', (string) ($validated['bonus_wager_multiplier']
+            ?? Setting::get('bonus_wager_multiplier', '5')));
+        Setting::set('risk_wd_ratio', (string) ($validated['risk_wd_ratio']
+            ?? Setting::get('risk_wd_ratio', '0.9')));
 
         return back()->with('status', 'Settings saved.');
     }

@@ -1006,4 +1006,28 @@ class SecurityAdminTest extends LicensedTestCase
 
         $this->travelBack();
     }
+
+    public function test_admin_can_update_phase6_settings(): void
+    {
+        $admin = $this->admin();
+
+        $this->actingAs($admin)->get(route('hmkr.settings.edit'))
+            ->assertOk()
+            ->assertSee('Client version (X-Client-Version)');
+
+        $this->actingAs($admin)->post(route('hmkr.settings.update'), [
+            'copyright_text' => 'Test copyright',
+            'client_version' => '2.1.0',
+            'cheat_min_move_ms' => 300,
+            'cheat_auto_suspend_flags' => 5,
+            'bonus_wager_multiplier' => 8,
+            'risk_wd_ratio' => 0.8,
+        ])->assertRedirect();
+
+        $this->assertSame('2.1.0', Setting::get('client_version'));
+        $this->assertSame('300', Setting::get('cheat_min_move_ms'));
+        $this->assertSame('5', Setting::get('cheat_auto_suspend_flags'));
+        $this->assertSame('8', Setting::get('bonus_wager_multiplier'));
+        $this->assertSame('0.8', Setting::get('risk_wd_ratio'));
+    }
 }

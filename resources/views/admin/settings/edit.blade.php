@@ -134,6 +134,64 @@
             @error('tournament_commission_rate')<p class="text-red-600 text-sm mt-1">{{ $message }}</p>@enderror
         </div>
 
+        <hr class="border-slate-200">
+        <h2 class="text-xl font-bold">Security &amp; anti-cheat (Phase 6)</h2>
+        <div class="grid md:grid-cols-2 gap-4">
+            <div>
+                <label for="client_version" class="block text-sm font-medium mb-1">Client version (X-Client-Version)</label>
+                <input id="client_version" type="text" name="client_version"
+                       value="{{ old('client_version', $client_version) }}"
+                       class="w-full border rounded px-3 py-2" maxlength="32">
+                <p class="text-xs text-slate-500 mt-1">Mismatch on /play JSON endpoints logs a cheat flag (never an instant ban).</p>
+                @error('client_version')<p class="text-red-600 text-sm mt-1">{{ $message }}</p>@enderror
+            </div>
+            <div>
+                <label for="cheat_min_move_ms" class="block text-sm font-medium mb-1">Min human move time (ms)</label>
+                <input id="cheat_min_move_ms" type="number" min="50" max="5000" name="cheat_min_move_ms"
+                       value="{{ old('cheat_min_move_ms', $cheat_min_move_ms) }}"
+                       class="w-full border rounded px-3 py-2">
+                <p class="text-xs text-slate-500 mt-1">Moves faster than this after the dice are logged as impossible_move_timing.</p>
+                @error('cheat_min_move_ms')<p class="text-red-600 text-sm mt-1">{{ $message }}</p>@enderror
+            </div>
+            <div>
+                <label for="cheat_auto_suspend_flags" class="block text-sm font-medium mb-1">Flags that auto-suspend</label>
+                <input id="cheat_auto_suspend_flags" type="number" min="1" max="20" name="cheat_auto_suspend_flags"
+                       value="{{ old('cheat_auto_suspend_flags', $cheat_auto_suspend_flags) }}"
+                       class="w-full border rounded px-3 py-2">
+                @error('cheat_auto_suspend_flags')<p class="text-red-600 text-sm mt-1">{{ $message }}</p>@enderror
+            </div>
+            <div>
+                <label for="cheat_flag_window_hours" class="block text-sm font-medium mb-1">Flag window (hours)</label>
+                <input id="cheat_flag_window_hours" type="number" min="1" max="720" name="cheat_flag_window_hours"
+                       value="{{ old('cheat_flag_window_hours', $cheat_flag_window_hours) }}"
+                       class="w-full border rounded px-3 py-2">
+                @error('cheat_flag_window_hours')<p class="text-red-600 text-sm mt-1">{{ $message }}</p>@enderror
+            </div>
+            <div>
+                <label for="referral_bonus_paise" class="block text-sm font-medium mb-1">Referral bonus (paise)</label>
+                <input id="referral_bonus_paise" type="number" min="0" max="1000000" name="referral_bonus_paise"
+                       value="{{ old('referral_bonus_paise', $referral_bonus_paise) }}"
+                       class="w-full border rounded px-3 py-2">
+                <p class="text-xs text-slate-500 mt-1">Credited only after the referee verifies mobile; locked until wagered.</p>
+                @error('referral_bonus_paise')<p class="text-red-600 text-sm mt-1">{{ $message }}</p>@enderror
+            </div>
+            <div>
+                <label for="bonus_wager_multiplier" class="block text-sm font-medium mb-1">Bonus wagering multiplier</label>
+                <input id="bonus_wager_multiplier" type="number" min="1" max="50" name="bonus_wager_multiplier"
+                       value="{{ old('bonus_wager_multiplier', $bonus_wager_multiplier) }}"
+                       class="w-full border rounded px-3 py-2">
+                @error('bonus_wager_multiplier')<p class="text-red-600 text-sm mt-1">{{ $message }}</p>@enderror
+            </div>
+            <div>
+                <label for="risk_wd_ratio" class="block text-sm font-medium mb-1">Risk: withdrawal/deposit ratio</label>
+                <input id="risk_wd_ratio" type="number" step="0.01" min="0.1" max="2" name="risk_wd_ratio"
+                       value="{{ old('risk_wd_ratio', $risk_wd_ratio) }}"
+                       class="w-full border rounded px-3 py-2">
+                <p class="text-xs text-slate-500 mt-1">Withdrawals above deposits × this ratio raise bot difficulty one level (capped at hard).</p>
+                @error('risk_wd_ratio')<p class="text-red-600 text-sm mt-1">{{ $message }}</p>@enderror
+            </div>
+        </div>
+
         <button type="submit" class="bg-indigo-700 text-white px-5 py-2 rounded hover:bg-indigo-800">Save Settings</button>
     </form>
 </div>
