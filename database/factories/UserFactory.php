@@ -24,10 +24,14 @@ class UserFactory extends Factory
      */
     public function definition(): array
     {
+        // NOTE: do NOT use the fake() helper here — it is unavailable in the
+        // production (--no-dev) container and breaks `migrate --seed` on deploy.
+        $tag = strtolower(Str::random(8));
+
         return [
-            'name' => fake()->name(),
-            'username' => fake()->unique()->userName(),
-            'email' => fake()->unique()->safeEmail(),
+            'name' => 'Player '.$tag,
+            'username' => 'player_'.$tag,
+            'email' => 'player_'.$tag.'@example.com',
             'email_verified_at' => now(),
             'password' => static::$password ??= Hash::make('password'),
             'remember_token' => Str::random(10),
