@@ -18,6 +18,7 @@ class DevSeeder extends Seeder
         $this->call([
             LicenseSeeder::class,
             AdminUserSeeder::class,
+            LudoSeeder::class,
         ]);
     }
 }

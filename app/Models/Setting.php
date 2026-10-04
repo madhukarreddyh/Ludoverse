@@ -31,6 +31,8 @@ class Setting extends Model
         'deposit_qr_image' => '',
         'withdrawal_commission_rate' => '2',
         'tds_rate' => '30',
+        // Ludo matches (Phase 4): platform cut of each pot, in percent.
+        'match_commission_rate' => '10',
     ];
 
     /**

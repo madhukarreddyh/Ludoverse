@@ -10,6 +10,7 @@ use App\Http\Controllers\ContactController;
 use App\Http\Controllers\InstallController;
 use App\Http\Controllers\OtpController;
 use App\Http\Controllers\PageController;
+use App\Http\Controllers\PlayController;
 use App\Http\Controllers\Wallet\WalletController;
 use Illuminate\Support\Facades\Route;
 
@@ -88,6 +89,19 @@ Route::middleware('auth')->prefix('wallet')->name('wallet.')->group(function () 
     Route::get('/withdraw', [WalletController::class, 'withdraw'])->name('withdraw');
     Route::post('/withdraw/preview', [WalletController::class, 'withdrawPreview'])->name('withdraw.preview');
     Route::post('/withdraw', [WalletController::class, 'withdrawStore'])->name('withdraw.store');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Ludo tables (server-authoritative; JSON over web session auth)
+|--------------------------------------------------------------------------
+*/
+Route::middleware('auth')->prefix('play')->name('play.')->group(function () {
+    Route::post('/find', [PlayController::class, 'find'])->name('find');
+    Route::get('/match/{match}', [PlayController::class, 'show'])->name('match.show');
+    Route::post('/match/{match}/roll', [PlayController::class, 'roll'])->name('match.roll');
+    Route::post('/match/{match}/move', [PlayController::class, 'move'])->name('match.move');
+    Route::post('/match/{match}/exit', [PlayController::class, 'exit'])->name('match.exit');
 });
 
 /*
