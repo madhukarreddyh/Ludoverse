@@ -1,13 +1,16 @@
 <?php
 
+use App\Http\Controllers\Admin\DepositController;
 use App\Http\Controllers\Admin\LicenseController;
 use App\Http\Controllers\Admin\SettingController;
+use App\Http\Controllers\Admin\WithdrawalController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\ContactController;
 use App\Http\Controllers\InstallController;
 use App\Http\Controllers\OtpController;
 use App\Http\Controllers\PageController;
+use App\Http\Controllers\Wallet\WalletController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -73,6 +76,22 @@ Route::middleware('auth')->group(function () {
 
 /*
 |--------------------------------------------------------------------------
+| Wallet (money in paise; ledger is the source of truth)
+|--------------------------------------------------------------------------
+*/
+Route::middleware('auth')->prefix('wallet')->name('wallet.')->group(function () {
+    Route::get('/', [WalletController::class, 'index'])->name('index');
+    Route::get('/deposit', [WalletController::class, 'deposit'])->name('deposit');
+    Route::post('/deposit/order', [WalletController::class, 'createGatewayOrder'])->name('deposit.order');
+    Route::post('/deposit/callback', [WalletController::class, 'depositCallback'])->name('deposit.callback');
+    Route::post('/deposit/manual', [WalletController::class, 'storeManualDeposit'])->name('deposit.manual');
+    Route::get('/withdraw', [WalletController::class, 'withdraw'])->name('withdraw');
+    Route::post('/withdraw/preview', [WalletController::class, 'withdrawPreview'])->name('withdraw.preview');
+    Route::post('/withdraw', [WalletController::class, 'withdrawStore'])->name('withdraw.store');
+});
+
+/*
+|--------------------------------------------------------------------------
 | Admin panel (Phase 6 will expand this)
 |--------------------------------------------------------------------------
 */
@@ -85,4 +104,13 @@ Route::middleware(['auth', 'admin'])->prefix('hmkr')->name('hmkr.')->group(funct
 
     Route::get('/settings', [SettingController::class, 'edit'])->name('settings.edit');
     Route::post('/settings', [SettingController::class, 'update'])->name('settings.update');
+
+    Route::get('/deposits', [DepositController::class, 'index'])->name('deposits.index');
+    Route::post('/deposits/{deposit}/approve', [DepositController::class, 'approve'])->name('deposits.approve');
+    Route::post('/deposits/{deposit}/reject', [DepositController::class, 'reject'])->name('deposits.reject');
+
+    Route::get('/withdrawals', [WithdrawalController::class, 'index'])->name('withdrawals.index');
+    Route::post('/withdrawals/{withdrawal}/approve', [WithdrawalController::class, 'approve'])->name('withdrawals.approve');
+    Route::post('/withdrawals/{withdrawal}/paid', [WithdrawalController::class, 'markPaid'])->name('withdrawals.paid');
+    Route::post('/withdrawals/{withdrawal}/reject', [WithdrawalController::class, 'reject'])->name('withdrawals.reject');
 });

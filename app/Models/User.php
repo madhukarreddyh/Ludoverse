@@ -15,7 +15,7 @@ use Illuminate\Notifications\Notifiable;
     'referral_code', 'my_referral_code',
     'email_verified_at', 'mobile_verified_at',
     'terms_accepted_at', 'privacy_accepted_at', 'refund_accepted_at',
-    'role', 'status',
+    'role', 'status', 'wallet_balance_paise',
 ])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable implements MustVerifyEmail
@@ -37,7 +37,16 @@ class User extends Authenticatable implements MustVerifyEmail
             'privacy_accepted_at' => 'datetime',
             'refund_accepted_at' => 'datetime',
             'password' => 'hashed',
+            'wallet_balance_paise' => 'integer',
         ];
+    }
+
+    /**
+     * The user's full ledger (the balance source of truth).
+     */
+    public function walletEntries(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(WalletLedger::class);
     }
 
     /**

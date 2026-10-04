@@ -24,6 +24,13 @@ class Setting extends Model
         'license_activated' => '0',
         'copyright_text' => 'Copyright © LudoVerse Platform. All rights reserved.',
         'show_copyright' => '1',
+        // Wallet / payments (Phase 3).
+        'gateway_razorpay_enabled' => '0',
+        'gateway_paytm_enabled' => '0',
+        'deposit_upi_id' => '',
+        'deposit_qr_image' => '',
+        'withdrawal_commission_rate' => '2',
+        'tds_rate' => '30',
     ];
 
     /**
