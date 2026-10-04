@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\FriendInvite;
+use App\Models\Friendship;
 use App\Models\LudoMatch;
+use App\Models\User;
 use App\Services\Ludo\LudoException;
 use App\Services\Ludo\MatchService;
 use Illuminate\Http\Request;
@@ -24,7 +27,14 @@ class PlayController extends Controller
         $data = $request->validate([
             'mode' => 'required|string|in:1v1,2v2,3v3,4v4',
             'bet_paise' => 'required|integer|in:500,1000',
+            // Optional: invite a friend (by game_id) to a private table
+            // instead of joining public matchmaking.
+            'invite_game_id' => 'nullable|string|max:16',
         ]);
+
+        if (! empty($data['invite_game_id'])) {
+            return $this->invite($request, $data['invite_game_id'], (int) $data['bet_paise']);
+        }
 
         try {
             $match = $this->matches->findOrCreateMatch(
@@ -39,6 +49,79 @@ class PlayController extends Controller
             'status' => $match->status,
             'state' => $this->matches->stateFor($match, $request->user()),
         ]);
+    }
+
+    /**
+     * Invite a friend to a private 1v1 table: creates the private
+     * waiting match and notifies the friend on their `user.{id}` channel.
+     */
+    protected function invite(Request $request, string $friendGameId, int $betPaise)
+    {
+        $friend = User::where('game_id', $friendGameId)->first();
+        if (! $friend) {
+            return response()->json([
+                'error' => ['code' => 'USER_NOT_FOUND', 'message' => 'No player with that game ID.'],
+            ], 404);
+        }
+
+        $me = $request->user();
+        if ((int) $friend->id === (int) $me->id) {
+            return response()->json([
+                'error' => ['code' => 'CANNOT_INVITE_SELF', 'message' => 'You cannot invite yourself.'],
+            ], 422);
+        }
+        if (! Friendship::areFriends((int) $me->id, (int) $friend->id)) {
+            return response()->json([
+                'error' => ['code' => 'NOT_FRIENDS', 'message' => 'You can only invite friends.'],
+            ], 422);
+        }
+
+        try {
+            $match = $this->matches->createPrivateMatch($me, $friend, $betPaise);
+        } catch (LudoException $e) {
+            return $this->ludoError($e);
+        }
+
+        FriendInvite::dispatch(
+            (int) $friend->id, $match->id,
+            (int) $me->id, (string) $me->name, (string) $me->game_id,
+        );
+
+        return response()->json([
+            'match_id' => $match->id,
+            'status' => $match->status,
+            'private' => true,
+            'invited_game_id' => $friend->game_id,
+            'state' => $this->matches->stateFor($match, $me),
+        ], 201);
+    }
+
+    /**
+     * The invited friend takes their seat at the private table.
+     */
+    public function joinInvite(Request $request, LudoMatch $match)
+    {
+        try {
+            $match = $this->matches->joinPrivateMatch($match, $request->user());
+        } catch (LudoException $e) {
+            return $this->ludoError($e);
+        }
+
+        return response()->json([
+            'match_id' => $match->id,
+            'status' => $match->status,
+            'state' => $this->matches->stateFor($match, $request->user()),
+        ]);
+    }
+
+    /**
+     * Spectator view: public match state, no auth required. Spectators
+     * get the board/scores/players but no legal moves or seat identity,
+     * and roll/move still 403 for non-seated users.
+     */
+    public function watch(LudoMatch $match)
+    {
+        return response()->json($this->matches->publicStateFor($match));
     }
 
     public function show(Request $request, LudoMatch $match)
