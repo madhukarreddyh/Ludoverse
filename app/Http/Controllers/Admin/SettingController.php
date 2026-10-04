@@ -46,8 +46,10 @@ class SettingController extends Controller
             'deposit_upi_id' => ['nullable', 'string', 'max:100'],
             'deposit_qr_image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             'remove_qr_image' => ['nullable', 'boolean'],
-            'withdrawal_commission_rate' => ['required', 'numeric', 'min:0', 'max:50'],
-            'tds_rate' => ['required', 'numeric', 'min:0', 'max:50'],
+            // Optional so older forms (e.g. copyright-only submissions) still
+            // validate; absent values keep the current setting.
+            'withdrawal_commission_rate' => ['nullable', 'numeric', 'min:0', 'max:50'],
+            'tds_rate' => ['nullable', 'numeric', 'min:0', 'max:50'],
         ]);
 
         Setting::set('copyright_text', $validated['copyright_text']);
@@ -63,8 +65,10 @@ class SettingController extends Controller
             Setting::set('deposit_qr_image', $request->file('deposit_qr_image')->store('deposit-qr', 'public'));
         }
 
-        Setting::set('withdrawal_commission_rate', (string) $validated['withdrawal_commission_rate']);
-        Setting::set('tds_rate', (string) $validated['tds_rate']);
+        Setting::set('withdrawal_commission_rate', (string) ($validated['withdrawal_commission_rate']
+            ?? Setting::get('withdrawal_commission_rate', '2')));
+        Setting::set('tds_rate', (string) ($validated['tds_rate']
+            ?? Setting::get('tds_rate', '30')));
 
         return back()->with('status', 'Settings saved.');
     }
