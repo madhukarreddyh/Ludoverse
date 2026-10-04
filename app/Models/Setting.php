@@ -31,7 +31,12 @@ class Setting extends Model
      */
     public static function get(string $key, ?string $default = null): ?string
     {
-        $row = static::query()->find($key);
+        try {
+            $row = static::query()->find($key);
+        } catch (\Throwable) {
+            // Table may not exist yet (fresh install before migrations).
+            $row = null;
+        }
 
         if ($row === null) {
             return $default ?? self::DEFAULTS[$key] ?? null;

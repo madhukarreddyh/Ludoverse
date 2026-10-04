@@ -21,5 +21,11 @@ class DatabaseSeeder extends Seeder
             'name' => 'Test User',
             'email' => 'test@example.com',
         ]);
+
+        // Development-only data (licenses, admin user).
+        // Skipped in tests: feature tests build their own fixtures.
+        if (! app()->environment('testing')) {
+            $this->call(DevSeeder::class);
+        }
     }
 }
