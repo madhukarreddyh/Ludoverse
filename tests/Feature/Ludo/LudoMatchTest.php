@@ -175,14 +175,16 @@ class LudoMatchTest extends LicensedTestCase
             $this->service()->findOrCreateMatch($user, '1v1', 700);
             $this->fail('Expected LudoException.');
         } catch (LudoException $e) {
-            $this->assertSame('INVALID_BET', $e->errorCode);
+            // Phase 6: bets outside the liquidity ladder are TABLE_CLOSED.
+            $this->assertSame('TABLE_CLOSED', $e->errorCode);
         }
 
-        // HTTP layer also rejects it (validation).
+        // HTTP layer also rejects it (MatchService -> 422 JSON).
         $response = $this->actingAs($user)->postJson('/play/find', [
             'mode' => '1v1', 'bet_paise' => 700,
         ]);
         $response->assertStatus(422);
+        $this->assertSame('TABLE_CLOSED', $response->json('error.code'));
     }
 
     public function test_find_rejects_insufficient_balance(): void

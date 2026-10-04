@@ -106,7 +106,9 @@ class MatchService
      */
     public function findOrCreateMatch(User $user, string $mode, int $betPaise, array $seatContext = []): LudoMatch
     {
-        if ($user->status !== 'active') {
+        // Freshly-created (unsaved-attribute) models carry status=null;
+        // the DB default is 'active', so null is treated as active here.
+        if (($user->status ?? 'active') !== 'active') {
             throw new LudoException('ACCOUNT_SUSPENDED', 'Your account is not allowed to play right now.', 403);
         }
         if (! in_array($mode, self::MODES, true)) {
