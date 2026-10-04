@@ -756,6 +756,37 @@ class SecurityAdminTest extends LicensedTestCase
             ->assertStatus(404);
     }
 
+    public function test_public_api_join_specific_match(): void
+    {
+        [$key, $plain] = ApiKey::generate('Test Public 4', 'public');
+        $a = $this->fundedUser(100000);
+        $b = $this->fundedUser(100000);
+
+        $loginA = $this->withHeaders(['Authorization' => "Bearer {$plain}"])
+            ->postJson('/api/v1/public/player/login', ['game_id' => $a->fresh()->game_id])->assertOk();
+        $tokenA = $loginA->json('player_token');
+
+        $start = $this->withHeaders(['Authorization' => "Bearer {$tokenA}"])
+            ->postJson('/api/v1/public/match/start', ['mode' => '1v1', 'bet' => 500])
+            ->assertCreated();
+        $matchId = $start->json('match_id');
+
+        $loginB = $this->withHeaders(['Authorization' => "Bearer {$plain}"])
+            ->postJson('/api/v1/public/player/login', ['game_id' => $b->fresh()->game_id])->assertOk();
+        $tokenB = $loginB->json('player_token');
+
+        // B joins A's exact waiting table -> it starts.
+        $this->withHeaders(['Authorization' => "Bearer {$tokenB}"])
+            ->postJson('/api/v1/public/match/join', ['match_id' => $matchId])
+            ->assertOk()
+            ->assertJson(['match_id' => $matchId, 'status' => 'running']);
+
+        // Joining a finished/nonexistent table fails cleanly.
+        $this->withHeaders(['Authorization' => "Bearer {$tokenB}"])
+            ->postJson('/api/v1/public/match/join', ['match_id' => 999999])
+            ->assertStatus(404);
+    }
+
     public function test_partner_api_ip_whitelist_enforced(): void
     {
         [$key, $plain] = ApiKey::generate('Test Partner', 'private', ['10.0.0.1']);

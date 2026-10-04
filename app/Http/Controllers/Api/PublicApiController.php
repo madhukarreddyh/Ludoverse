@@ -116,24 +116,22 @@ class PublicApiController extends Controller
     }
 
     /**
-     * Join a specific waiting match.
+     * Join a specific waiting match by id.
      */
     public function matchJoin(Request $request): JsonResponse
     {
         $data = $request->validate(['match_id' => ['required', 'integer']]);
 
         $match = \App\Models\LudoMatch::find($data['match_id']);
-        if (! $match || $match->status !== 'waiting' || $match->is_private) {
-            return response()->json(['error' => 'Match is not joinable.'], 404);
+        if (! $match) {
+            return response()->json(['error' => 'Match not found.'], 404);
         }
 
         $player = $request->attributes->get('player');
 
         try {
-            // Reuse matchmaking with the match's own mode+bet so all the
-            // guards (collusion block, table ladder, balance) still apply.
-            $joined = $this->matches->findOrCreateMatch(
-                $player, $match->mode, $match->bet_paise,
+            $joined = $this->matches->joinSpecificMatch(
+                $player, $match,
                 ['ip_address' => $request->ip(), 'device_hash' => null]
             );
         } catch (LudoException $e) {

@@ -196,11 +196,99 @@ class MatchService
     }
 
     /**
+     * Seat a player at one SPECIFIC waiting match (used by the public
+     * API's match/join). Every guard from matchmaking applies: account
+     * status, table ladder, no double-seating, balance, and the
+     * collusion pair-block against already-seated humans.
+     *
+     * @throws LudoException NOT_JOINABLE / ACCOUNT_SUSPENDED / TABLE_CLOSED / ALREADY_IN_MATCH / INSUFFICIENT_BALANCE / COLLUSION_BLOCKED
+     */
+    public function joinSpecificMatch(User $user, LudoMatch $match, array $seatContext = []): LudoMatch
+    {
+        if (($user->status ?? 'active') !== 'active') {
+            throw new LudoException('ACCOUNT_SUSPENDED', 'Your account is not allowed to play right now.', 403);
+        }
+
+        return DB::transaction(function () use ($user, $match, $seatContext) {
+            $match = LudoMatch::lockForUpdate()->findOrFail($match->id);
+
+            if ($match->status !== 'waiting' || $match->is_private) {
+                throw new LudoException('NOT_JOINABLE', 'This match is not joinable.');
+            }
+            if (! in_array($match->bet_paise, \App\Services\TableManager::currentAllowedBets(), true)) {
+                throw new LudoException('TABLE_CLOSED', 'This table level is closed right now.');
+            }
+
+            $active = MatchPlayer::where('user_id', $user->id)
+                ->where('status', 'playing')
+                ->whereHas('match', fn ($q) => $q->whereIn('status', ['waiting', 'running']))
+                ->first();
+            if ($active) {
+                throw new LudoException('ALREADY_IN_MATCH', 'Finish or exit your current match first.', 422);
+            }
+
+            if ($match->players()->where('user_id', $user->id)->exists()) {
+                return $match; // idempotent re-join
+            }
+
+            $seats = LudoMatch::seatsForMode($match->mode);
+            if ($match->players()->count() >= $seats) {
+                throw new LudoException('NOT_JOINABLE', 'This table is full.');
+            }
+
+            $this->assertNoCollusionBlock($user, $match);
+
+            if ($this->wallets->balance($user) < $match->bet_paise) {
+                throw new LudoException('INSUFFICIENT_BALANCE', 'Top up your wallet to join this table.');
+            }
+
+            $seatIndex = $match->players()->count();
+            $match->players()->create([
+                'user_id' => $user->id,
+                'team' => $seatIndex < $seats / 2 ? 0 : 1,
+                'color' => self::SEAT_COLORS[$seatIndex],
+                'ip_address' => $seatContext['ip_address'] ?? null,
+                'device_hash' => $seatContext['device_hash'] ?? null,
+            ]);
+
+            if ($match->players()->count() >= $seats) {
+                $this->startMatch($match->fresh());
+            }
+
+            return $match->fresh();
+        });
+    }
+
+    /**
+     * Collusion guard: the joiner must not share an OPEN same-IP or
+     * same-device fraud flag with anyone already seated.
+     *
+     * @throws LudoException COLLUSION_BLOCKED
+     */
+    protected function assertNoCollusionBlock(User $user, LudoMatch $match): void
+    {
+        $seatedIds = $match->players()
+            ->where('is_bot', false)
+            ->whereNotNull('user_id')
+            ->pluck('user_id');
+
+        foreach ($seatedIds as $seatedId) {
+            if ($this->fraud->pairBlocked($user->id, (int) $seatedId)) {
+                throw new LudoException(
+                    'COLLUSION_BLOCKED',
+                    'You cannot be seated at this table due to a pending fair-play review.',
+                    403
+                );
+            }
+        }
+    }
+
+    /**
      * Create a private 1v1 table for a friend invite. The table is
      * invisible to public matchmaking and bot auto-fill; the invited
      * friend joins via joinPrivateMatch().
      *
-     * @throws LudoException INVALID_BET / ALREADY_IN_MATCH / INSUFFICIENT_BALANCE
+     * @throws LudoException TABLE_CLOSED / ALREADY_IN_MATCH / INSUFFICIENT_BALANCE
      */
     public function createPrivateMatch(User $inviter, User $friend, int $betPaise, array $seatContext = []): LudoMatch
     {
