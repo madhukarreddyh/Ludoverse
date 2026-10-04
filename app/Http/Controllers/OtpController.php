@@ -62,6 +62,44 @@ class OtpController extends Controller
             'mobile_verified_at' => now(),
         ])->save();
 
+        // Signup-promo abuse protection: the referrer's bonus is credited
+        // ONLY now that the referee's mobile is verified (not at signup).
+        // WalletService wraps the credit in a BonusLock automatically.
+        $this->creditReferralBonus($user);
+
         return redirect()->route('home')->with('status', 'Mobile number verified.');
+    }
+
+    /**
+     * Credit the referrer's referral bonus exactly once. Idempotent via
+     * the ledger reference_id — a retried verification never double-pays.
+     */
+    protected function creditReferralBonus(\App\Models\User $referee): void
+    {
+        if (! $referee->referral_code) {
+            return;
+        }
+
+        $referrer = \App\Models\User::where('my_referral_code', $referee->referral_code)->first();
+        if (! $referrer || (int) $referrer->id === (int) $referee->id) {
+            return;
+        }
+
+        $amount = (int) (\App\Models\Setting::get('referral_bonus_paise', '10000') ?? '10000');
+        if ($amount <= 0) {
+            return;
+        }
+
+        try {
+            app(\App\Services\WalletService::class)->credit(
+                $referrer,
+                'referral_bonus',
+                $amount,
+                "referral_{$referee->id}",
+                ['referee_user_id' => $referee->id],
+            );
+        } catch (\App\Services\DuplicateReferenceException) {
+            // Already credited — the verification was retried.
+        }
     }
 }

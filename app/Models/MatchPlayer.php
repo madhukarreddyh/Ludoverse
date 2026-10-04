@@ -13,7 +13,7 @@ class MatchPlayer extends Model
 {
     protected $fillable = [
         'match_id', 'user_id', 'team', 'color', 'is_bot', 'bot_difficulty',
-        'score', 'missed_turns', 'status',
+        'ip_address', 'device_hash', 'score', 'missed_turns', 'status',
     ];
 
     protected function casts(): array

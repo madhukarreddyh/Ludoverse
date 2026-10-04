@@ -17,7 +17,7 @@ class LudoMatch extends Model
         'mode', 'bet_paise', 'is_private', 'invited_user_id',
         'tournament_fixture_id', 'status', 'board_state', 'scores',
         'current_turn_user_id', 'turn_deadline_at', 'pending_dice',
-        'consecutive_sixes', 'ends_at', 'winner_user_id', 'winning_team',
+        'dice_rolled_at', 'consecutive_sixes', 'ends_at', 'winner_user_id', 'winning_team',
     ];
 
     protected function casts(): array
@@ -29,6 +29,7 @@ class LudoMatch extends Model
             'turn_deadline_at' => 'datetime',
             'ends_at' => 'datetime',
             'pending_dice' => 'integer',
+            'dice_rolled_at' => 'datetime',
             'consecutive_sixes' => 'integer',
             'bet_paise' => 'integer',
             'winning_team' => 'integer',

@@ -43,6 +43,32 @@ class Setting extends Model
         'tournament_commission_rate' => '10',
         // Minutes a fixture participant has to join their match.
         'tournament_join_deadline_minutes' => '60',
+        // ---- Phase 6: security, anti-cheat, liquidity, risk ----
+        // Expected client build version; /play JSON endpoints require the
+        // X-Client-Version header to match (mismatch = cheat flag, not ban).
+        'client_version' => '1.0.0',
+        // A move submitted faster than this (ms) after the dice is logged
+        // as impossible_move_timing.
+        'cheat_min_move_ms' => '200',
+        // Flags inside this window (hours) that auto-suspend an account.
+        'cheat_flag_window_hours' => '24',
+        'cheat_auto_suspend_flags' => '3',
+        // Upper bound on captures assumed when computing the theoretical
+        // max score per match (score anomaly check).
+        'cheat_max_captures_per_match' => '20',
+        // Referral bonus: credited only after the referee verifies mobile;
+        // locked until the referee wagers bonus x this multiplier.
+        'referral_bonus_paise' => '10000',
+        'bonus_wager_multiplier' => '5',
+        // Risk manager: withdrawals above deposits x this ratio trigger
+        // an automatic bot-difficulty raise (capped at hard).
+        'risk_wd_ratio' => '0.9',
+        // Liquidity manager: '1' = bet levels follow online count
+        // automatically; '0' = use tables_manual_bets (JSON array).
+        'tables_auto_mode' => '1',
+        'tables_manual_bets' => '["500","1000"]',
+        // Maintenance mode: '1' serves 503 on public pages (/hmkr stays up).
+        'maintenance_mode' => '0',
     ];
 
     /**

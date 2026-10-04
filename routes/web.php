@@ -1,18 +1,27 @@
 <?php
 
 use App\Http\Controllers\Admin\DepositController;
+use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
+use App\Http\Controllers\Admin\DeviceController as AdminDeviceController;
+use App\Http\Controllers\Admin\FraudController as AdminFraudController;
 use App\Http\Controllers\Admin\LicenseController;
 use App\Http\Controllers\Admin\SettingController;
+use App\Http\Controllers\Admin\SupportController as AdminSupportController;
+use App\Http\Controllers\Admin\ApiKeyController as AdminApiKeyController;
+use App\Http\Controllers\Admin\TableController as AdminTableController;
 use App\Http\Controllers\Admin\TournamentController as AdminTournamentController;
+use App\Http\Controllers\Admin\UserController as AdminUserController;
 use App\Http\Controllers\Admin\WithdrawalController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\ContactController;
+use App\Http\Controllers\EmbedController;
 use App\Http\Controllers\FriendController;
 use App\Http\Controllers\InstallController;
 use App\Http\Controllers\OtpController;
 use App\Http\Controllers\PageController;
 use App\Http\Controllers\PlayController;
+use App\Http\Controllers\SupportTicketController;
 use App\Http\Controllers\TournamentController;
 use App\Http\Controllers\Wallet\WalletController;
 use Illuminate\Support\Facades\Route;
@@ -102,7 +111,7 @@ Route::middleware('auth')->prefix('wallet')->name('wallet.')->group(function () 
 // Spectator view: public, no auth required to VIEW a match.
 Route::get('/play/match/{match}/watch', [PlayController::class, 'watch'])->name('play.watch');
 
-Route::middleware('auth')->prefix('play')->name('play.')->group(function () {
+Route::middleware(['auth', 'client.version'])->prefix('play')->name('play.')->group(function () {
     Route::post('/find', [PlayController::class, 'find'])->name('find');
     Route::get('/match/{match}', [PlayController::class, 'show'])->name('match.show');
     Route::post('/match/{match}/roll', [PlayController::class, 'roll'])->name('match.roll');
@@ -140,10 +149,74 @@ Route::post('/tournaments/{tournament}/join', [TournamentController::class, 'joi
 
 /*
 |--------------------------------------------------------------------------
+| Support tickets (players)
+|--------------------------------------------------------------------------
+*/
+Route::middleware('auth')->prefix('support')->name('support.')->group(function () {
+    Route::get('/', [SupportTicketController::class, 'index'])->name('index');
+    Route::get('/create', [SupportTicketController::class, 'create'])->name('create');
+    Route::post('/', [SupportTicketController::class, 'store'])->name('store');
+    Route::get('/{ticket}', [SupportTicketController::class, 'show'])->name('show');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Secure iframe embed (partners) — token verified by EmbedController
+|--------------------------------------------------------------------------
+*/
+Route::get('/embed/match/{match}', [EmbedController::class, 'board'])->name('embed.board');
+
+/*
+|--------------------------------------------------------------------------
 | Admin panel (Phase 6 will expand this)
 |--------------------------------------------------------------------------
 */
 Route::middleware(['auth', 'admin'])->prefix('hmkr')->name('hmkr.')->group(function () {
+    // Dashboard home.
+    Route::get('/', [AdminDashboardController::class, 'index'])->name('dashboard');
+    Route::post('/notices/{notice}/read', [AdminDashboardController::class, 'readNotice'])->name('notices.read');
+    Route::post('/maintenance', [AdminDashboardController::class, 'maintenance'])->name('maintenance');
+
+    // Users.
+    Route::get('/users', [AdminUserController::class, 'index'])->name('users.index');
+    Route::get('/users/{user}', [AdminUserController::class, 'show'])->name('users.show');
+    Route::post('/users/{user}/suspend', [AdminUserController::class, 'suspend'])->name('users.suspend');
+    Route::post('/users/{user}/unsuspend', [AdminUserController::class, 'unsuspend'])->name('users.unsuspend');
+    Route::post('/users/{user}/freeze', [AdminUserController::class, 'freeze'])->name('users.freeze');
+    Route::post('/users/{user}/unfreeze', [AdminUserController::class, 'unfreeze'])->name('users.unfreeze');
+    Route::delete('/devices/{device}', [AdminUserController::class, 'destroyDevice'])->name('devices.destroy');
+
+    // Devices.
+    Route::get('/devices', [AdminDeviceController::class, 'index'])->name('devices.index');
+    Route::post('/devices/ban', [AdminDeviceController::class, 'ban'])->name('devices.ban');
+    Route::delete('/devices/banned/{bannedDevice}', [AdminDeviceController::class, 'unban'])->name('devices.unban');
+
+    // Fraud triage.
+    Route::get('/fraud', [AdminFraudController::class, 'index'])->name('fraud.index');
+    Route::get('/fraud/{fraud}', [AdminFraudController::class, 'show'])->name('fraud.show');
+    Route::post('/fraud/{fraud}/confirm', [AdminFraudController::class, 'confirm'])->name('fraud.confirm');
+    Route::post('/fraud/{fraud}/dismiss', [AdminFraudController::class, 'dismiss'])->name('fraud.dismiss');
+
+    // Liquidity / tables.
+    Route::get('/tables', [AdminTableController::class, 'edit'])->name('tables.edit');
+    Route::post('/tables', [AdminTableController::class, 'update'])->name('tables.update');
+
+    // API keys.
+    Route::get('/api-keys', [AdminApiKeyController::class, 'index'])->name('api-keys.index');
+    Route::post('/api-keys', [AdminApiKeyController::class, 'store'])->name('api-keys.store');
+    Route::post('/api-keys/{apiKey}/disable', [AdminApiKeyController::class, 'disable'])->name('api-keys.disable');
+    Route::post('/api-keys/{apiKey}/enable', [AdminApiKeyController::class, 'enable'])->name('api-keys.enable');
+    Route::post('/api-keys/{apiKey}/regenerate', [AdminApiKeyController::class, 'regenerate'])->name('api-keys.regenerate');
+    Route::delete('/api-keys/{apiKey}', [AdminApiKeyController::class, 'destroy'])->name('api-keys.destroy');
+    Route::get('/api-keys/{apiKey}/logs', [AdminApiKeyController::class, 'logs'])->name('api-keys.logs');
+
+    // Support.
+    Route::get('/support', [AdminSupportController::class, 'index'])->name('support.index');
+    Route::get('/support/{ticket}', [AdminSupportController::class, 'show'])->name('support.show');
+    Route::post('/support/{ticket}/reply', [AdminSupportController::class, 'reply'])->name('support.reply');
+    Route::post('/support/{ticket}/close', [AdminSupportController::class, 'close'])->name('support.close');
+    Route::post('/support/{ticket}/reopen', [AdminSupportController::class, 'reopen'])->name('support.reopen');
+
     Route::get('/licenses', [LicenseController::class, 'index'])->name('licenses.index');
     Route::post('/licenses', [LicenseController::class, 'store'])->name('licenses.store');
     Route::patch('/licenses/{license}/activate', [LicenseController::class, 'activate'])->name('licenses.activate');

@@ -18,6 +18,7 @@
 
     <form method="POST" action="{{ route('login') }}" class="space-y-4 bg-white p-6 rounded-lg shadow">
         @csrf
+        @include('auth._device_fingerprint')
         <div>
             <label for="login" class="block text-sm font-medium mb-1">Email or username</label>
             <input id="login" type="text" name="login" value="{{ old('login') }}" required class="w-full border rounded px-3 py-2">

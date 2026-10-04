@@ -79,10 +79,14 @@ class MatchService
         protected LudoEngine $engine,
         protected BotStrategy $bots,
         protected ?BotStrategyFactory $botFactory = null,
+        protected ?\App\Services\CheatDetectionService $cheat = null,
+        protected ?\App\Services\FraudScanService $fraud = null,
     ) {
         // $botFactory is optional so older call sites (and tests)
         // constructing MatchService with 3 args keep working.
         $this->botFactory ??= new BotStrategyFactory;
+        $this->cheat ??= app(\App\Services\CheatDetectionService::class);
+        $this->fraud ??= app(\App\Services\FraudScanService::class);
     }
 
     // ------------------------------------------------------------------
@@ -93,18 +97,31 @@ class MatchService
      * Join a waiting match with the same mode+bet and a free seat,
      * otherwise create a new waiting match. Starts the match when full.
      *
-     * @throws LudoException INVALID_MODE / INVALID_BET / ALREADY_IN_MATCH / INSUFFICIENT_BALANCE
+     * Phase 6: the bet must be in TableManager::currentAllowedBets()
+     * (liquidity ladder), otherwise TABLE_CLOSED. Seats record ip_address
+     * + device_hash for the collusion scanner, and matchmaking will not
+     * seat two users who share an open same-IP / same-device fraud flag.
+     *
+     * @throws LudoException INVALID_MODE / TABLE_CLOSED / INVALID_BET / ALREADY_IN_MATCH / INSUFFICIENT_BALANCE / ACCOUNT_SUSPENDED
      */
-    public function findOrCreateMatch(User $user, string $mode, int $betPaise): LudoMatch
+    public function findOrCreateMatch(User $user, string $mode, int $betPaise, array $seatContext = []): LudoMatch
     {
+        if ($user->status !== 'active') {
+            throw new LudoException('ACCOUNT_SUSPENDED', 'Your account is not allowed to play right now.', 403);
+        }
         if (! in_array($mode, self::MODES, true)) {
             throw new LudoException('INVALID_MODE', "Mode '{$mode}' is not supported.");
         }
-        if (! in_array($betPaise, self::ALLOWED_BETS, true)) {
-            throw new LudoException('INVALID_BET', 'Only ₹5 and ₹10 tables are open right now.');
+        $openBets = \App\Services\TableManager::currentAllowedBets();
+        if (! in_array($betPaise, $openBets, true)) {
+            throw new LudoException(
+                'TABLE_CLOSED',
+                'This table level is closed right now. Open levels: '.
+                implode(', ', array_map(fn ($b) => '₹'.($b / 100), $openBets)).'.'
+            );
         }
 
-        return DB::transaction(function () use ($user, $mode, $betPaise) {
+        return DB::transaction(function () use ($user, $mode, $betPaise, $seatContext) {
             // One active match per user — no double-seating.
             $active = MatchPlayer::where('user_id', $user->id)
                 ->where('status', 'playing')
@@ -123,7 +140,10 @@ class MatchService
 
             // Oldest waiting match with a free seat, locked so two joins
             // cannot take the same last seat. Private (invite-only) tables
-            // are invisible to public matchmaking.
+            // are invisible to public matchmaking. Tables where a seated
+            // human shares an OPEN same-IP / same-device fraud flag with
+            // the joiner are skipped — suspected colluders never share a
+            // table (a fresh table is created instead).
             $match = LudoMatch::where('status', 'waiting')
                 ->where('mode', $mode)
                 ->where('bet_paise', $betPaise)
@@ -131,7 +151,22 @@ class MatchService
                 ->orderBy('id')
                 ->lockForUpdate()
                 ->get()
-                ->first(fn (LudoMatch $m) => $m->players()->count() < $seats);
+                ->first(function (LudoMatch $m) use ($user, $seats) {
+                    if ($m->players()->count() >= $seats) {
+                        return false;
+                    }
+                    $seatedIds = $m->players()
+                        ->where('is_bot', false)
+                        ->whereNotNull('user_id')
+                        ->pluck('user_id');
+                    foreach ($seatedIds as $seatedId) {
+                        if ($this->fraud->pairBlocked($user->id, (int) $seatedId)) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                });
 
             if (! $match) {
                 $match = LudoMatch::create([
@@ -146,6 +181,8 @@ class MatchService
                 'user_id' => $user->id,
                 'team' => $seatIndex < $seats / 2 ? 0 : 1,
                 'color' => self::SEAT_COLORS[$seatIndex],
+                'ip_address' => $seatContext['ip_address'] ?? null,
+                'device_hash' => $seatContext['device_hash'] ?? null,
             ]);
 
             if ($match->players()->count() >= $seats) {
@@ -163,13 +200,13 @@ class MatchService
      *
      * @throws LudoException INVALID_BET / ALREADY_IN_MATCH / INSUFFICIENT_BALANCE
      */
-    public function createPrivateMatch(User $inviter, User $friend, int $betPaise): LudoMatch
+    public function createPrivateMatch(User $inviter, User $friend, int $betPaise, array $seatContext = []): LudoMatch
     {
-        if (! in_array($betPaise, self::ALLOWED_BETS, true)) {
-            throw new LudoException('INVALID_BET', 'Only ₹5 and ₹10 tables are open right now.');
+        if (! in_array($betPaise, \App\Services\TableManager::currentAllowedBets(), true)) {
+            throw new LudoException('TABLE_CLOSED', 'This table level is closed right now.');
         }
 
-        return DB::transaction(function () use ($inviter, $friend, $betPaise) {
+        return DB::transaction(function () use ($inviter, $friend, $betPaise, $seatContext) {
             $active = MatchPlayer::where('user_id', $inviter->id)
                 ->where('status', 'playing')
                 ->whereHas('match', fn ($q) => $q->whereIn('status', ['waiting', 'running']))
@@ -194,6 +231,8 @@ class MatchService
                 'user_id' => $inviter->id,
                 'team' => 0,
                 'color' => self::SEAT_COLORS[0],
+                'ip_address' => $seatContext['ip_address'] ?? null,
+                'device_hash' => $seatContext['device_hash'] ?? null,
             ]);
 
             return $match->fresh();
@@ -206,9 +245,9 @@ class MatchService
      *
      * @throws LudoException NOT_INVITED / ALREADY_IN_MATCH / INSUFFICIENT_BALANCE
      */
-    public function joinPrivateMatch(LudoMatch $match, User $user): LudoMatch
+    public function joinPrivateMatch(LudoMatch $match, User $user, array $seatContext = []): LudoMatch
     {
-        return DB::transaction(function () use ($match, $user) {
+        return DB::transaction(function () use ($match, $user, $seatContext) {
             $match = LudoMatch::lockForUpdate()->findOrFail($match->id);
 
             if (! $match->is_private || $match->status !== 'waiting') {
@@ -237,6 +276,8 @@ class MatchService
                 'user_id' => $user->id,
                 'team' => 1,
                 'color' => self::SEAT_COLORS[1],
+                'ip_address' => $seatContext['ip_address'] ?? null,
+                'device_hash' => $seatContext['device_hash'] ?? null,
             ]);
 
             if ($match->players()->count() >= LudoMatch::seatsForMode($match->mode)) {
@@ -392,6 +433,7 @@ class MatchService
 
             $match->update([
                 'pending_dice' => $dice,
+                'dice_rolled_at' => now(),
                 'turn_deadline_at' => now()->addSeconds(self::TURN_SECONDS),
             ]);
 
@@ -416,6 +458,11 @@ class MatchService
             if ($dice === null) {
                 throw new LudoException('NO_DICE', 'Roll the dice first.');
             }
+
+            // Anti-cheat: a move faster than cheat_min_move_ms after the
+            // dice is superhuman. Logged only — the move still stands, so
+            // a clock-skew false positive can never ruin a real game.
+            $this->cheat->checkMoveTiming($user, $match);
 
             $board = $match->board_state;
             try {
@@ -599,6 +646,10 @@ class MatchService
                 $match->fresh()->scores ?? [], $payouts,
             );
 
+            // Anti-cheat: flag impossible single-match scores (auto-suspend
+            // escalates inside the cheat service at 3 flags / 24h).
+            $this->cheat->checkScoreAnomaly($match->fresh());
+
             // Tournament fixture match: feed the result into the points
             // table. Resolved lazily (not constructor-injected) to avoid
             // a MatchService <-> TournamentService construction cycle.
@@ -735,10 +786,21 @@ class MatchService
                 }
 
                 $seatIndex = $players->count();
+                // Risk manager escalation: a human at this table with an
+                // OPEN high_winrate flag faces hard bots. Statistical
+                // pressure only — never a targeted outcome.
+                $seatDifficulty = $difficulty;
+                $humanIds = $players->where('is_bot', false)->whereNotNull('user_id')->pluck('user_id');
+                if ($humanIds->isNotEmpty() && \App\Models\FraudFlag::whereIn('user_id', $humanIds)
+                        ->where('type', 'high_winrate')
+                        ->where('status', 'open')
+                        ->exists()) {
+                    $seatDifficulty = 'hard';
+                }
                 $match->players()->create([
                     'user_id' => $bot->id,
                     'is_bot' => true,
-                    'bot_difficulty' => $difficulty,
+                    'bot_difficulty' => $seatDifficulty,
                     'team' => $seatIndex < $seats / 2 ? 0 : 1,
                     'color' => self::SEAT_COLORS[$seatIndex],
                 ]);
@@ -1132,6 +1194,7 @@ class MatchService
     protected function playersPayload(LudoMatch $match): array
     {
         return $match->players()->orderBy('id')->get()->map(fn (MatchPlayer $p) => [
+            'id' => $p->id,
             'user_id' => $p->user_id,
             'team' => $p->team,
             'color' => $p->color,

@@ -6,6 +6,8 @@ use App\Events\FriendInvite;
 use App\Models\Friendship;
 use App\Models\LudoMatch;
 use App\Models\User;
+use App\Services\FraudScanService;
+use App\Services\HeuristicVpnCheck;
 use App\Services\Ludo\LudoException;
 use App\Services\Ludo\MatchService;
 use Illuminate\Http\Request;
@@ -18,19 +20,41 @@ use Illuminate\Http\Request;
  */
 class PlayController extends Controller
 {
-    public function __construct(protected MatchService $matches)
+    public function __construct(
+        protected MatchService $matches,
+        protected FraudScanService $fraud,
+        protected HeuristicVpnCheck $vpn,
+    ) {
+    }
+
+    /**
+     * Seat context recorded on every seat for the collusion scanner.
+     */
+    protected function seatContext(Request $request): array
     {
+        return [
+            'ip_address' => $request->ip(),
+            'device_hash' => $request->session()->get('device_hash'),
+        ];
     }
 
     public function find(Request $request)
     {
         $data = $request->validate([
             'mode' => 'required|string|in:1v1,2v2,3v3,4v4',
-            'bet_paise' => 'required|integer|in:500,1000',
+            // Any positive bet: MatchService rejects closed levels with
+            // TABLE_CLOSED (the liquidity ladder decides what's open).
+            'bet_paise' => 'required|integer|min:1',
             // Optional: invite a friend (by game_id) to a private table
             // instead of joining public matchmaking.
             'invite_game_id' => 'nullable|string|max:16',
         ]);
+
+        // VPN heuristic at matchmaking: flag-only, never a block.
+        $vpn = $this->vpn->check($request);
+        if ($vpn->suspect) {
+            $this->fraud->flagVpnSuspect($request->user(), $vpn->reasons, $request);
+        }
 
         if (! empty($data['invite_game_id'])) {
             return $this->invite($request, $data['invite_game_id'], (int) $data['bet_paise']);
@@ -38,7 +62,8 @@ class PlayController extends Controller
 
         try {
             $match = $this->matches->findOrCreateMatch(
-                $request->user(), $data['mode'], (int) $data['bet_paise']
+                $request->user(), $data['mode'], (int) $data['bet_paise'],
+                $this->seatContext($request)
             );
         } catch (LudoException $e) {
             return $this->ludoError($e);
@@ -77,7 +102,7 @@ class PlayController extends Controller
         }
 
         try {
-            $match = $this->matches->createPrivateMatch($me, $friend, $betPaise);
+            $match = $this->matches->createPrivateMatch($me, $friend, $betPaise, $this->seatContext($request));
         } catch (LudoException $e) {
             return $this->ludoError($e);
         }
@@ -102,7 +127,7 @@ class PlayController extends Controller
     public function joinInvite(Request $request, LudoMatch $match)
     {
         try {
-            $match = $this->matches->joinPrivateMatch($match, $request->user());
+            $match = $this->matches->joinPrivateMatch($match, $request->user(), $this->seatContext($request));
         } catch (LudoException $e) {
             return $this->ludoError($e);
         }
