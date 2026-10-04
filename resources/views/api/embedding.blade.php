@@ -36,7 +36,7 @@
 $token = app(\App\Services\EmbedTokenService::class)->issue($apiKey, 3600);
 
 // in your Blade template:
-&lt;iframe src="{{ config('app.url') }}/embed/match/{{ $matchId }}?token={{ $token }}"&gt;&lt;/iframe&gt;</pre>
+&lt;iframe src="{{ config('app.url') }}/embed/match/123?token=@{{ $token }}"&gt;&lt;/iframe&gt;</pre>
     </div>
 </div>
 @endsection

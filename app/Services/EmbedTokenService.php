@@ -37,7 +37,7 @@ class EmbedTokenService
     {
         $payload = json_encode([
             'kid' => $apiKey->id,
-            'exp' => time() + max(60, $ttlSeconds),
+            'exp' => now()->timestamp + max(60, $ttlSeconds),
         ]);
 
         $encoded = $this->b64encode($payload);
@@ -61,7 +61,7 @@ class EmbedTokenService
         if (! is_array($payload) || ! isset($payload['kid'], $payload['exp'])) {
             return null;
         }
-        if (! is_int($payload['exp']) || $payload['exp'] < time()) {
+        if (! is_int($payload['exp']) || $payload['exp'] < now()->timestamp) {
             return null; // expired
         }
 
