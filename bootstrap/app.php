@@ -2,6 +2,7 @@
 
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureLicensed;
+use App\Http\Middleware\UpdateLastSeen;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -18,6 +19,9 @@ return Application::configure(basePath: dirname(__DIR__))
         // License gate on every web route (the middleware itself
         // exempts the /install routes).
         $middleware->appendToGroup('web', EnsureLicensed::class);
+
+        // Online-presence heartbeat for the friends list.
+        $middleware->appendToGroup('web', UpdateLastSeen::class);
 
         // Short alias for admin-only routes.
         $middleware->alias(['admin' => EnsureAdmin::class]);

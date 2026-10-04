@@ -36,9 +36,20 @@ class User extends Authenticatable implements MustVerifyEmail
             'terms_accepted_at' => 'datetime',
             'privacy_accepted_at' => 'datetime',
             'refund_accepted_at' => 'datetime',
+            'last_seen_at' => 'datetime',
             'password' => 'hashed',
             'wallet_balance_paise' => 'integer',
         ];
+    }
+
+    /**
+     * Online = seen within the last 5 minutes (bumped by the
+     * UpdateLastSeen middleware on authenticated requests).
+     */
+    public function isOnline(): bool
+    {
+        return $this->last_seen_at !== null
+            && $this->last_seen_at->gt(now()->subMinutes(5));
     }
 
     /**

@@ -14,7 +14,8 @@ class LudoMatch extends Model
     protected $table = 'matches';
 
     protected $fillable = [
-        'mode', 'bet_paise', 'status', 'board_state', 'scores',
+        'mode', 'bet_paise', 'is_private', 'invited_user_id',
+        'tournament_fixture_id', 'status', 'board_state', 'scores',
         'current_turn_user_id', 'turn_deadline_at', 'pending_dice',
         'consecutive_sixes', 'ends_at', 'winner_user_id', 'winning_team',
     ];
@@ -22,6 +23,7 @@ class LudoMatch extends Model
     protected function casts(): array
     {
         return [
+            'is_private' => 'boolean',
             'board_state' => 'array',
             'scores' => 'array',
             'turn_deadline_at' => 'datetime',

@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Models\User;
+use App\Observers\UserObserver;
 use App\Services\Ludo\BotStrategy;
 use App\Services\Ludo\RandomBotStrategy;
 use Illuminate\Support\ServiceProvider;
@@ -22,6 +24,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // Public friend codes ("LV" + zero-padded id) on signup.
+        User::observe(UserObserver::class);
     }
 }

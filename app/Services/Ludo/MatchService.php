@@ -78,7 +78,11 @@ class MatchService
         protected WalletService $wallets,
         protected LudoEngine $engine,
         protected BotStrategy $bots,
+        protected ?BotStrategyFactory $botFactory = null,
     ) {
+        // $botFactory is optional so older call sites (and tests)
+        // constructing MatchService with 3 args keep working.
+        $this->botFactory ??= new BotStrategyFactory;
     }
 
     // ------------------------------------------------------------------
@@ -118,10 +122,12 @@ class MatchService
             $seats = LudoMatch::seatsForMode($mode);
 
             // Oldest waiting match with a free seat, locked so two joins
-            // cannot take the same last seat.
+            // cannot take the same last seat. Private (invite-only) tables
+            // are invisible to public matchmaking.
             $match = LudoMatch::where('status', 'waiting')
                 ->where('mode', $mode)
                 ->where('bet_paise', $betPaise)
+                ->where('is_private', false)
                 ->orderBy('id')
                 ->lockForUpdate()
                 ->get()
@@ -145,6 +151,130 @@ class MatchService
             if ($match->players()->count() >= $seats) {
                 $this->startMatch($match);
             }
+
+            return $match->fresh();
+        });
+    }
+
+    /**
+     * Create a private 1v1 table for a friend invite. The table is
+     * invisible to public matchmaking and bot auto-fill; the invited
+     * friend joins via joinPrivateMatch().
+     *
+     * @throws LudoException INVALID_BET / ALREADY_IN_MATCH / INSUFFICIENT_BALANCE
+     */
+    public function createPrivateMatch(User $inviter, User $friend, int $betPaise): LudoMatch
+    {
+        if (! in_array($betPaise, self::ALLOWED_BETS, true)) {
+            throw new LudoException('INVALID_BET', 'Only ₹5 and ₹10 tables are open right now.');
+        }
+
+        return DB::transaction(function () use ($inviter, $friend, $betPaise) {
+            $active = MatchPlayer::where('user_id', $inviter->id)
+                ->where('status', 'playing')
+                ->whereHas('match', fn ($q) => $q->whereIn('status', ['waiting', 'running']))
+                ->first();
+            if ($active) {
+                throw new LudoException('ALREADY_IN_MATCH', 'Finish or exit your current match first.', 422);
+            }
+
+            if ($this->wallets->balance($inviter) < $betPaise) {
+                throw new LudoException('INSUFFICIENT_BALANCE', 'Top up your wallet to join this table.');
+            }
+
+            $match = LudoMatch::create([
+                'mode' => '1v1',
+                'bet_paise' => $betPaise,
+                'status' => 'waiting',
+                'is_private' => true,
+                'invited_user_id' => $friend->id,
+            ]);
+
+            $match->players()->create([
+                'user_id' => $inviter->id,
+                'team' => 0,
+                'color' => self::SEAT_COLORS[0],
+            ]);
+
+            return $match->fresh();
+        });
+    }
+
+    /**
+     * The invited friend takes their seat at a private table. Starts the
+     * match once both seats are filled.
+     *
+     * @throws LudoException NOT_INVITED / ALREADY_IN_MATCH / INSUFFICIENT_BALANCE
+     */
+    public function joinPrivateMatch(LudoMatch $match, User $user): LudoMatch
+    {
+        return DB::transaction(function () use ($match, $user) {
+            $match = LudoMatch::lockForUpdate()->findOrFail($match->id);
+
+            if (! $match->is_private || $match->status !== 'waiting') {
+                throw new LudoException('NOT_INVITED', 'This invite is no longer open.');
+            }
+            if ((int) $match->invited_user_id !== (int) $user->id) {
+                throw new LudoException('NOT_INVITED', 'This private table is not for you.', 403);
+            }
+            if ($match->players()->where('user_id', $user->id)->exists()) {
+                return $match; // idempotent re-join
+            }
+
+            $active = MatchPlayer::where('user_id', $user->id)
+                ->where('status', 'playing')
+                ->whereHas('match', fn ($q) => $q->whereIn('status', ['waiting', 'running']))
+                ->first();
+            if ($active) {
+                throw new LudoException('ALREADY_IN_MATCH', 'Finish or exit your current match first.', 422);
+            }
+
+            if ($this->wallets->balance($user) < $match->bet_paise) {
+                throw new LudoException('INSUFFICIENT_BALANCE', 'Top up your wallet to join this table.');
+            }
+
+            $match->players()->create([
+                'user_id' => $user->id,
+                'team' => 1,
+                'color' => self::SEAT_COLORS[1],
+            ]);
+
+            if ($match->players()->count() >= LudoMatch::seatsForMode($match->mode)) {
+                $this->startMatch($match->fresh());
+            }
+
+            return $match->fresh();
+        });
+    }
+
+    /**
+     * Create a match with an explicit seat list and start it immediately.
+     * Used by the tournament engine: bet 0 (entry already paid), real
+     * humans on both sides, bots only as padding in 4v4.
+     *
+     * Each seat: ['user_id' => ?int, 'team' => int, 'is_bot' => bool,
+     *             'bot_difficulty' => ?string]. Seats fill colours in order.
+     */
+    public function createMatchWithSeats(array $seats, string $mode, int $betPaise, array $extra = []): LudoMatch
+    {
+        return DB::transaction(function () use ($seats, $mode, $betPaise, $extra) {
+            $match = LudoMatch::create(array_merge([
+                'mode' => $mode,
+                'bet_paise' => $betPaise,
+                'status' => 'waiting',
+            ], $extra));
+
+            foreach (array_values($seats) as $i => $seat) {
+                $match->players()->create([
+                    'user_id' => $seat['user_id'] ?? null,
+                    'is_bot' => $seat['is_bot'] ?? false,
+                    'bot_difficulty' => $seat['bot_difficulty'] ?? null,
+                    'team' => $seat['team'],
+                    'color' => self::SEAT_COLORS[$i],
+                ]);
+            }
+
+            $this->startMatch($match->fresh());
 
             return $match->fresh();
         });
@@ -183,6 +313,11 @@ class MatchService
         foreach ($players as $player) {
             if (! $player->isHuman()) {
                 continue;
+            }
+            // Tournament fixtures run bet 0 (entry was already paid) —
+            // WalletService::debit rejects non-positive amounts, so skip.
+            if ($match->bet_paise <= 0) {
+                break;
             }
             // Idempotent reference: a retried start can never double-debit.
             $this->wallets->debit(
@@ -463,6 +598,17 @@ class MatchService
                 $match->fresh(), $winnerUserId, $winningTeam,
                 $match->fresh()->scores ?? [], $payouts,
             );
+
+            // Tournament fixture match: feed the result into the points
+            // table. Resolved lazily (not constructor-injected) to avoid
+            // a MatchService <-> TournamentService construction cycle.
+            if ($match->tournament_fixture_id) {
+                $fixture = \App\Models\TournamentFixture::find($match->tournament_fixture_id);
+                if ($fixture) {
+                    app(\App\Services\TournamentService::class)
+                        ->recordFixtureResult($fixture, $match->fresh());
+                }
+            }
         });
     }
 
@@ -515,11 +661,109 @@ class MatchService
     // ------------------------------------------------------------------
 
     /**
+     * Bot auto-fill (bot economy): a public waiting table on an allowed
+     * bet level that has waited longer than `bot_join_after_seconds`
+     * gets a bot seated, up to `bot_max_per_match` bots per match.
+     *
+     * Bots are role=bot users seated with is_bot=true, so the existing
+     * wallet rule holds: they are never debited or credited. The bot
+     * plays with the admin's configured `bot_difficulty` strategy.
+     *
+     * HONESTY NOTE: seating harder bots shifts win RATES statistically
+     * in the house's favour over many games, but no difficulty setting
+     * targets an exact win ratio — dice variance makes that impossible
+     * to guarantee per game or per player.
+     */
+    protected function fillWaitingMatchesWithBots(): void
+    {
+        if (! Setting::bool('bot_fill_enabled')) {
+            return;
+        }
+
+        $tables = json_decode((string) Setting::get('bot_tables', '["500","1000"]'), true);
+        if (! is_array($tables) || $tables === []) {
+            return;
+        }
+        $tables = array_map('intval', $tables);
+
+        $maxBots = (int) Setting::get('bot_max_per_match', '1');
+        $afterSeconds = (int) Setting::get('bot_join_after_seconds', '20');
+        $difficulty = (string) Setting::get('bot_difficulty', 'medium');
+        if ($maxBots < 1) {
+            return;
+        }
+
+        $waiting = LudoMatch::where('status', 'waiting')
+            ->where('is_private', false)
+            ->whereIn('bet_paise', $tables)
+            ->where('created_at', '<=', now()->subSeconds(max(0, $afterSeconds)))
+            ->orderBy('id')
+            ->pluck('id');
+
+        foreach ($waiting as $id) {
+            DB::transaction(function () use ($id, $maxBots, $difficulty) {
+                $match = LudoMatch::lockForUpdate()->find($id);
+                if (! $match || $match->status !== 'waiting') {
+                    return;
+                }
+
+                $seats = LudoMatch::seatsForMode($match->mode);
+                $players = $match->players()->lockForUpdate()->get();
+                if ($players->count() >= $seats) {
+                    return;
+                }
+                if ($players->where('is_bot', true)->count() >= $maxBots) {
+                    return;
+                }
+
+                // A bot user already seated at any live table is busy.
+                $busyIds = MatchPlayer::where('is_bot', true)
+                    ->whereIn('status', ['playing', 'finished'])
+                    ->whereHas('match', fn ($q) => $q->whereIn('status', ['waiting', 'running']))
+                    ->pluck('user_id')
+                    ->filter()
+                    ->all();
+
+                $bot = User::where('role', 'bot')
+                    ->where('status', 'active')
+                    ->whereNotIn('id', $busyIds)
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->first();
+                if (! $bot) {
+                    return;
+                }
+
+                $seatIndex = $players->count();
+                $match->players()->create([
+                    'user_id' => $bot->id,
+                    'is_bot' => true,
+                    'bot_difficulty' => $difficulty,
+                    'team' => $seatIndex < $seats / 2 ? 0 : 1,
+                    'color' => self::SEAT_COLORS[$seatIndex],
+                ]);
+
+                if ($match->players()->count() >= $seats) {
+                    $this->startMatch($match->fresh());
+                }
+            });
+        }
+    }
+
+    /**
      * Advance all running matches: expire the match timer, punish missed
      * turns (5 misses = removal), and auto-play bot turns.
+     *
+     * Also drives the two waiting-room jobs: bot auto-fill for tables
+     * that have waited too long, and tournament join-deadline processing
+     * (no-shows become losses).
      */
     public function tick(): void
     {
+        $this->fillWaitingMatchesWithBots();
+
+        app(\App\Services\TournamentService::class)->processJoinDeadlines();
+
         $ids = LudoMatch::where('status', 'running')->pluck('id');
 
         foreach ($ids as $id) {
@@ -717,7 +961,8 @@ class MatchService
                 return;
             }
 
-            $token = $this->bots->chooseMove($legal, $board, $bot->color, $dice);
+            $token = $this->botFactory->forDifficulty($bot->bot_difficulty)
+                ->chooseMove($legal, $board, $bot->color, $dice);
             // $token came from legalMoves, so this cannot throw.
             $result = $this->engine->applyMove($board, $bot->color, $token, $dice);
 
@@ -899,11 +1144,14 @@ class MatchService
     /**
      * Public read model for GET /play/match/{id}. Includes the pending
      * dice + legal moves so the roller can choose — all server-computed.
+     *
+     * Pass $user = null for the spectator view: no per-player secrets
+     * (no legal moves, no seat identity) are exposed.
      */
-    public function stateFor(LudoMatch $match, User $user): array
+    public function stateFor(LudoMatch $match, ?User $user): array
     {
         $match->load('players');
-        $me = $match->players->firstWhere('user_id', $user->id);
+        $me = $user ? $match->players->firstWhere('user_id', $user->id) : null;
 
         $legalMoves = [];
         $pendingDice = $match->pending_dice;
@@ -929,5 +1177,14 @@ class MatchService
             'winner_user_id' => $match->winner_user_id,
             'winning_team' => $match->winning_team,
         ];
+    }
+
+    /**
+     * Spectator-safe state: the board, scores and players are public;
+     * legal moves and seat identity are withheld.
+     */
+    public function publicStateFor(LudoMatch $match): array
+    {
+        return $this->stateFor($match, null);
     }
 }

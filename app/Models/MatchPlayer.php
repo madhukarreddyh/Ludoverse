@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class MatchPlayer extends Model
 {
     protected $fillable = [
-        'match_id', 'user_id', 'team', 'color', 'is_bot',
+        'match_id', 'user_id', 'team', 'color', 'is_bot', 'bot_difficulty',
         'score', 'missed_turns', 'status',
     ];
 
